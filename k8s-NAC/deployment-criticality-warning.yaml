@@ -1,0 +1,27 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: warn-missing-criticality-label
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["apps"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["deployments"]
+    # Limit to our example namespaces
+    namespaceSelector:
+      matchLabels:
+        service: myapp
+  validations:
+    - expression: 'has(object.metadata.labels["criticality"]) && ["HIGH","MEDIUM","LOW"].exists(v, v == object.metadata.labels["criticality"])'
+      message: "Deployments need a label of 'criticality' starting on 1/1/2027 with the values 'HIGH', 'MEDIUM', or 'LOW'"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: warn-missing-criticality-label-binding
+spec:
+  policyName: warn-missing-criticality-label
+  validationActions: ["Warn"]

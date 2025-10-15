@@ -1,0 +1,36 @@
+# Create an admission policy that verifies deployments are not created or updated 
+# with a replica count that exceeds the NamespaceQuota maxReplicas. This policy 
+# needs to use the NamespaceQuota resource, do not hard code limits in your expressions.
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: require-maxreplicas-in-namespacequota
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["apps"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["deployments"]
+    namespaceSelector:
+      matchLabels:
+        service: myapp
+  paramKind:
+    apiVersion: policy.example.com/v1
+    kind: NamespaceQuota
+  validations:
+    - expression: '((has(object.spec.replicas) ? object.spec.replicas : 1) <= params.spec.maxReplicas)'
+      message: "Deployment replicas must be <= NamespaceQuota.spec.maxReplicas for this namespace"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: require-maxreplicas-in-namespacequota-binding
+spec:
+  policyName: require-maxreplicas-in-namespacequota
+  validationActions: ["Deny"]
+  paramRef:
+    name: replica-quota
+    parameterNotFoundAction: Deny

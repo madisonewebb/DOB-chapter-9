@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      volumes:
+      - name: html-content
+        hostPath:
+          path: /var/www/html
+          type: DirectoryOrCreate
+      containers:
+      - name: nginx
+        image: nginx:latest
+        ports:
+        - name: http
+          containerPort: 80
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+        startupProbe:
+          exec:
+            command:
+            - cat
+            - /etc/nginx/nginx.conf
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 2
+          periodSeconds: 2
+          successThreshold: 2
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /index.html
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
