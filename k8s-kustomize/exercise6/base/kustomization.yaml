@@ -1,0 +1,99 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nginx
+
+resources:
+- namespace.yaml
+- deployment.yaml
+- service.yaml
+
+labels:
+- includeSelectors: true
+  pairs:
+    liatr: io
+
+images:
+- name: nginx
+  newTag: 1.29.2
+
+patches:
+# Change "REDACTED" env val to my name using strategicMergePatch
+  - patch: |-
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: nginx
+        spec:
+          template:
+            spec:
+              containers:
+                - name: nginx
+                  env:
+                    - name: apprentice
+                      value: Madison
+
+# Add resources section to the container in the deployment using JSON6902
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: nginx
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          limits:
+            memory: 1Gi
+          requests:
+            memory: 512Mi
+            cpu: 100m
+
+# Add env var SECRET using JSON6902
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: nginx
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: SECRET
+          valueFrom:
+            secretKeyRef:
+              name: secret
+              key: SECRET
+
+# Mount the generated ConfigMap as /usr/share/nginx/html inside the nginx container
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: nginx
+    patch: |-
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: nginx-html
+            configMap:
+              name: nginx-index
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: nginx-html
+            mountPath: /usr/share/nginx/html
+            readOnly: true
+
+secretGenerator:
+- name: secret
+  envs:
+  - .env
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+- name: nginx-index
+  files:
+  - index.html
