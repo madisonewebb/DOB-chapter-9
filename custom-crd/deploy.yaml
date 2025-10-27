@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nolatest-controller
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nolatest-controller
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nolatest-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nolatest-controller
+subjects:
+- kind: ServiceAccount
+  name: nolatest-controller
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nolatest-controller
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nolatest-controller
+  template:
+    metadata:
+      labels:
+        app: nolatest-controller
+    spec:
+      serviceAccountName: nolatest-controller
+      containers:
+      - name: controller
+        image: your-registry/nolatest-controller:py
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NO_LATEST_ANNOTATION
+          value: "nolatest.dev/warning"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi

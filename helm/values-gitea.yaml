@@ -1,0 +1,11 @@
+gitea:
+  admin:
+    username: admin
+    password: password
+
+persistence:
+  size: 3Gi
+
+resources:
+  limits:
+    memory: 2Gi

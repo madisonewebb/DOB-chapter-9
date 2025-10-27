@@ -1,0 +1,185 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	_ "github.com/google/go-cmp/cmp"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	v1listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
+)
+
+type Controller struct {
+	kubeclientset kubernetes.Interface
+	workqueue     workqueue.RateLimitingInterface
+	podsLister    v1listers.PodLister
+	podsInformer  cache.SharedIndexInformer
+}
+
+func NewController(
+	kubeclientset kubernetes.Interface,
+	podsInformer cache.SharedIndexInformer) *Controller {
+
+	workqueue := workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "YourResourceHere")
+
+	controller := &Controller{
+		kubeclientset: kubeclientset,
+		workqueue:     workqueue,
+		podsLister:    v1listers.NewPodLister(podsInformer.GetIndexer()),
+		podsInformer:  podsInformer,
+	}
+
+	podsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: controller.enqueue,
+		UpdateFunc: func(old, new interface{}) {
+			controller.enqueue(new)
+		},
+		DeleteFunc: controller.enqueue,
+	})
+
+	return controller
+}
+
+func (c *Controller) enqueue(obj interface{}) {
+	key, err := cache.MetaNamespaceKeyFunc(obj)
+	if err != nil {
+		runtime.HandleError(err)
+		return
+	}
+	c.workqueue.Add(key)
+}
+
+func (c *Controller) runWorker() {
+	for c.processNextWorkItem() {
+	}
+}
+
+func (c *Controller) processNextWorkItem() bool {
+	obj, shutdown := c.workqueue.Get()
+
+	if shutdown {
+		return false
+	}
+
+	err := func(obj interface{}) error {
+		defer c.workqueue.Done(obj)
+		var key string
+		var ok bool
+		if key, ok = obj.(string); !ok {
+			c.workqueue.Forget(obj)
+			klog.Errorf("expected string in workqueue but got %#v", obj)
+			return nil
+		}
+		if err := c.syncHandler(key); err != nil {
+			c.workqueue.AddRateLimited(key)
+			return fmt.Errorf("error syncing '%s': %s, requeuing", key, err.Error())
+		}
+		c.workqueue.Forget(key)
+		klog.Infof("Successfully synced '%s'", key)
+		return nil
+	}(obj)
+
+	if err != nil {
+		klog.Errorf("error processing item: %v", err)
+		return true
+	}
+
+	return true
+}
+
+func (c *Controller) syncHandler(key string) error {
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return fmt.Errorf("invalid resource key: %s", key)
+	}
+
+	pod, err := c.podsLister.Pods(namespace).Get(name)
+	if err != nil {
+		return nil
+	}
+
+	if pod.Annotations == nil || pod.Annotations["add-pod-name-label"] != "true" {
+		return nil
+	}
+
+	if pod.Labels != nil && pod.Labels["pod"] == pod.Name {
+		return nil
+	}
+
+	updated := pod.DeepCopy()
+	if updated.Labels == nil {
+		updated.Labels = map[string]string{}
+	}
+	updated.Labels["pod"] = updated.Name
+
+	if _, err := c.kubeclientset.CoreV1().Pods(namespace).Update(context.TODO(), updated, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("updating pod label failed: %w", err)
+	}
+	return nil
+}
+
+func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
+	defer runtime.HandleCrash()
+	defer c.workqueue.ShutDown()
+
+	klog.Info("Starting Pod controller")
+
+	go c.podsInformer.Run(stopCh)
+
+	if !cache.WaitForCacheSync(stopCh, c.podsInformer.HasSynced) {
+		return fmt.Errorf("failed to wait for caches to sync")
+	}
+
+	for i := 0; i < threadiness; i++ {
+		go wait.Until(c.runWorker, time.Second, stopCh)
+	}
+
+	<-stopCh
+	klog.Info("Shutting down workers")
+
+	return nil
+}
+
+func main() {
+	kubeconfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		clientcmd.NewDefaultClientConfigLoadingRules(),
+		&clientcmd.ConfigOverrides{},
+	)
+	config, err := kubeconfig.ClientConfig()
+	if err != nil {
+		klog.Fatalf("Error building kubeconfig: %s", err.Error())
+	}
+
+	kubeclientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		klog.Fatalf("Error building kubernetes clientset: %s", err.Error())
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(
+		kubeclientset,
+		time.Second*30,
+		informers.WithNamespace("controllers"),
+	)
+	podsInformer := informerFactory.Core().V1().Pods().Informer()
+
+	controller := NewController(kubeclientset, podsInformer)
+
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+
+	go informerFactory.Start(stopCh)
+
+	if err = controller.Run(2, stopCh); err != nil {
+		klog.Fatalf("Error running controller: %s", err.Error())
+	}
+
+}

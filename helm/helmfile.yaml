@@ -1,0 +1,11 @@
+repositories:
+  - name: gitea-charts
+    url: https://dl.gitea.com/charts/
+
+releases:
+  - name: gitea
+    namespace: gitea
+    chart: gitea-charts/gitea
+    createNamespace: true
+    values:
+      - values-gitea.yaml
